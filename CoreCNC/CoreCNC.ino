@@ -8,8 +8,14 @@ char buffer[bufferSize]; // Buffer de lectura del puerto serie
 float XYZ[3] = {0, 0, 0}; //Array donde se guardan las coordenadas xyz
 
 //Informacion Miscelanea
-
-int ElevaZ=10; //Indica cuanto debe elevarse en el eje z el cabezal, con respecto a la altura actual, antes de regresar al origen.
+int AvaRap=40; //Indica la velocidad por defecto del avance rapido en mm/s.
+int AvaLen=20; //Indica la velocidad por defecto del avance lento en mm/s.
+int ElevaZ=10; //Indica cuanto debe elevarse en el eje z el cabezal (en mm), con respecto a la altura actual, antes de regresar al origen.
+bool RelativeMode = false; //Variable donde se guarda si el modo de coordenadas relativas esta habilitado o no.
+bool UnidadesImperiales = false; //Esta variable indica si la maquina esta trabajando en unidades del sisrema imperial (Una cac, por favor dejen de usarlo) o no.
+bool InvalidCurveCorrection = true; // Esta variable lo que hace es, si es verdadera, trazar la curva hasta el punto mas cercano al punto
+// final especificado y luego acercarce a este en linea recte, si este no forma una circunferencia valida con el centro y el punto de origen (Posicion actual del cabezal).
+// Si es falso, el programa se detiene e informa al usuario de que no ha enviado coordenadas que tracen una curva valida.
 
 //Informacion del ratio de dezplazamieno de los ejes (paso/mm):
 
@@ -59,6 +65,35 @@ int Signo(float numero) {
     return -1;
   } else {
     return 0;
+  }
+}
+
+void ConvertirASistemaMetrico(){
+  if(UnidadesImperiales){
+    for (int i = 0; i < 10; i++) {
+
+      ValRec[i] = ValRec[i] * 25.4;
+    }
+  }
+  else{}
+}
+
+void PrntFinalPos(){
+  if(UnidadesImperiales){
+    Serial.print(F("X: "));
+    Serial.println(XYZ[0]/25.4);
+    Serial.print(F("Y: "));
+    Serial.println(XYZ[1]/25.4);
+    Serial.print(F("Z: "));
+    Serial.println(XYZ[2]/25.4);
+  }
+  else{
+      Serial.print(F("X: "));
+      Serial.println(XYZ[0]);
+      Serial.print(F("Y: "));
+      Serial.println(XYZ[1]);
+      Serial.print(F("Z: "));
+     Serial.println(XYZ[2]);
   }
 }
 
@@ -224,24 +259,31 @@ bool MovimientoLineal(int tipo) { //Esta funcion automatiza el procesar los para
   int VelDefault=0;
   
   if(tipo==0){
-    VelDefault=40;
+    VelDefault=AvaRap;
   }
   else{
-    VelDefault=20;
+    VelDefault=AvaLen;
   }
   
   procesamiento_de_entrada(); //Procesa los valores de entrada que estan el el buffer del puerto serie
+  ConvertirASistemaMetrico(); //Si los datos se enviaron en pulgadas, se conviierten a milimetros
 
   if (Presencia[0] || Presencia[1] || Presencia[2]) { //Comprueba si se ha recibido al menos una coordenada en algun eje (ordenados como x,y,z).
 
     float ParametrosDeArgumento[4] = {0, 0, 0, 0}; //En este array se guardaran las coordenadas XYZ que se pasaran como paramtro a la funcion dibujaLinea.
 
     for (int i = 0; i < 3; i++) { //Ejecuta el bucle 3 veces, una por cada coordenada
-      if (Presencia[i]) {
-        ParametrosDeArgumento[i] = ValRec[i]; //Si Presencia guarda verdadero, se pasa el valor de la coordenada guardado en la memoria del buffer al array que se usara mas tarde
+      if (Presencia[i]) { //Evalua si esta presente el valor en la memoria. Si es verdadero, se pasa a ejecutar la siguiente comprobacion
+       
+        if(RelativeMode){ //Si el modo de coordenadas relativas esta en verdadero, se guarda en el array de salida, la posicion actual del cabezal mas la coordenada recibida
+          ParametrosDeArgumento[i] = XYZ[i]+ValRec[i];
+        }
+        else{
+          ParametrosDeArgumento[i] = ValRec[i]; //Si es falso, se pasa directamente el valor de la coordenada guardado en la memoria del buffer al array que se usara mas tarde
+        }
       }
       else {
-        ParametrosDeArgumento[i] = XYZ[i]; // Si guarda falso, se pasa el valor del array que codifica la posicion actual del cabezal
+        ParametrosDeArgumento[i] = XYZ[i]; // Si guarda falso la comprobacion en Presencia, se pasa el valor del array que codifica la posicion actual del cabezal
       }
     }
     if (Presencia[6]){ //Comprobamos si enviaron el parametro F
@@ -263,23 +305,56 @@ bool MovimientoLineal(int tipo) { //Esta funcion automatiza el procesar los para
   }
 }
 
+bool MovimientoCurvilineo(int tipo){ //Si el tipo de curva es 0, el movimiento es horario, si es 1, es antihorario.
+
+  float VectorCentro[3]={0,0,0};
+  float VectorInicial[3]={0,0,0};
+  float VectorFinal[3]={0,0,0};
+
+  procesamiento_de_entrada(); //Lo llamamos para procesar los datos del buffer del puerto serie.
+  ConvertirASistemaMetrico(); //Si los datos se enviaron en pulgadas, se conviierten a milimetros
+
+  if ((Presencia[0] || Presencia[1])&&((Presencia[3] || Presencia[4])^(Presencia[8]))){ //Verifica si al menos se ha recibido al menos una coordenada en algun eje del plano XY, y si se ha especificado, como minimo una coordenada para el centro o un radio.
+    
+    if(Presencia[8]){
+
+
+    }
+
+
+
+  }
+
+  else {
+
+      if((Presencia[3] || Presencia[4])&&(Presencia[8])){
+        Serial.println(F("El Radio (Parámetro R) y el centro (Parámetros I y J) son parametros excluyentes, no pueden estar ambos en el mismo comando"));
+      }
+      
+      if(!(Presencia[0] || Presencia[1])){
+        Serial.println(F("Faltan las coordenadas del Punto final (Parametros X e Y)"));
+      }
+
+      if(!Presencia[3] && !Presencia[4] && !Presencia[8]){
+        Serial.println(F("Faltan las coordenadas del Centro o el Radio. Especifique almenos uno de estos parametros"));
+      }
+
+    return false; //Si no se ha recibido ningun parametro o o la informacion es insuficiente, se retorna falso y no se hace nada.
+  }
+}
+
 void G0(){
     bool stat=MovimientoLineal(0);
    
     if(stat){
       
-      Serial.println("Comando G0 recibido y ejecutado");
-      Serial.print("X: ");
-      Serial.println(XYZ[0]);
-      Serial.print("Y: ");
-      Serial.println(XYZ[1]);
-      Serial.print("Z: ");
-     Serial.println(XYZ[2]);
+      Serial.println(F("Comando G0 recibido y ejecutado"));
+      PrntFinalPos();
     }
     else{
       
-      Serial.println("Error, Parametros insuficientes"); 
-      Serial.println("Reenvie el comando");
+      Serial.println(F("Error, Parametros insuficientes")); 
+      Serial.println(F("Reenvie el comando"));
     }
     
 }
@@ -289,34 +364,45 @@ void G1() {
    
     if(stat){
       
-      Serial.println("Comando G1 recibido y ejecutado");
-      Serial.print("X: ");
-      Serial.println(XYZ[0]);
-      Serial.print("Y: ");
-      Serial.println(XYZ[1]);
-      Serial.print("Z: ");
-     Serial.println(XYZ[2]);
+      Serial.println(F("Comando G1 recibido y ejecutado"));
+      PrntFinalPos();
     }
     else{
       
-      Serial.println("Error, Parametros insuficientes"); 
-      Serial.println("Reenvie el comando");
+      Serial.println(F("Error, Parametros insuficientes")); 
+      Serial.println(F("Reenvie el comando"));
     }
     
 }
 
 void G2() {
-  procesamiento_de_entrada();
-  // Código específico para el comando G2
-  // Aquí puedes agregar la lógica que deseas ejecutar para el comando G2
-  Serial.println("Comando G2 recibido");
+    bool stat=MovimientoCurvilineo(0);
+   
+    if(stat){
+      
+      Serial.println("Comando G2 recibido y ejecutado");
+      PrntFinalPos();
+    }
+    else{
+      
+      Serial.println("Error de trazado. Acción no ejecutada"); 
+      Serial.println("Reenvie el comando");
+    }
 }
 
 void G3() {
-  procesamiento_de_entrada();
-  // Código específico para el comando G3
-  // Aquí puedes agregar la lógica que deseas ejecutar para el comando G3
-  Serial.println("Comando G3 recibido");
+    bool stat=MovimientoCurvilineo(1);
+   
+    if(stat){
+      
+      Serial.println("Comando G3 recibido y ejecutado");
+      PrntFinalPos();
+    }
+    else{
+      
+      Serial.println("Error de trazado. Acción no ejecutada"); 
+      Serial.println("Reenvie el comando");
+    }
 }
 
 void G4() {
@@ -334,16 +420,20 @@ void G4() {
 
 void G20() {
   
-  Serial.println("No trabajo en pulgadas, no soy yankee. Mejor deja de usar un sistema tan inconveniente solo para sentirte especial");
+  Serial.println(F("No no me gusta trabajar en pulgadas, no soy yankee. Mejor deja de usar un sistema tan inconveniente solo para sentirte especial"));
+  UnidadesImperiales=true;
+  Serial.println("Ahi ta... me puse en tu sistema imperial");
 }
 
 void G21() {
   
-  Serial.println("Yo ya trabajo en milimetros, pero ahora tembien se que somos bros de corazon. Arriba el Sistema internacional de unidades XD");
+  Serial.println(F("Yo ya trabajo en milimetros, pero ahora tembien se que somos bros de corazon. Arriba el Sistema internacional de unidades XD"));
+  UnidadesImperiales=false;
+  Serial.println("Sistema Metrico Seleccionado");
 }
 
 void G28() {
-
+  procesamiento_de_entrada();
   dibujaLinea(XYZ[0],XYZ[1],XYZ[2]+ElevaZ,40);
   dibujaLinea(0,0,XYZ[2],40);
   dibujaLinea(0,0,0,40);
@@ -355,15 +445,21 @@ void G30() {
 }
 
 void G90() {
-
+  RelativeMode = false;
+  Serial.println("Se ha cambiado el modo de coordenadas en 'Modo absoluto'");
 }
 
 void G91() {
-
+  RelativeMode = true;
+  Serial.println("Se ha cambiado el modo de coordenadas en 'Modo relativo'");
 }
 
 void G92() {
-
+  procesamiento_de_entrada();
+  XYZ[0] = 0; //
+  XYZ[1] = 0; // Se reestablece a 0 Laas coordenadas del cabezal.
+  XYZ[2] = 0; //
+  Serial.println("Se ha Seteado estas  coordenadas como origen");
 }
 
 
@@ -381,6 +477,30 @@ void loop() {
     buffer[bytesRead] = '\0'; // Agregar el caracter nulo al final del buffer
 
     // Verificar el comando recibido
+    if (strncmp(buffer, "G92", 3) == 0)
+    {
+      G92();
+    }
+
+    if (strncmp(buffer, "G91", 3) == 0)
+    {
+      G91();
+    }
+
+    if (strncmp(buffer, "G90", 3) == 0)
+    {
+      G90();
+    }
+
+    if (strncmp(buffer, "G30", 3) == 0)
+    {
+      G30();
+    }
+
+    if (strncmp(buffer, "G28", 3) == 0)
+    {
+      G28();
+    }
 
     if (strncmp(buffer, "G20", 3) == 0)
     {
